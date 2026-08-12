@@ -25,6 +25,10 @@ return {
     },
     
     -- 摇杆映射
+    -- 简单格式: [axis_code] = { [value] = "action_id" }
+    -- 扩展格式（带抑制）: [axis_code] = { [value] = { actions = "action_id", suppress = N } }
+    --   suppress = N 表示触发后忽略同轴的下一个值N事件（用于解决方向键回弹问题）
+    --   例如 8BitDo Micro D-pad: 右键值255触发时，抑制释放产生的值127误触发
     joy_map = {
         [16] = {
             [-1] = "decrease_brightness",
