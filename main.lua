@@ -46,6 +46,14 @@ local ACTION_REGISTRY = {
     { id = "pull_progress",       name = _("拉取阅读进度"),     exec = function() UIManager:sendEvent(Event:new("KOSyncPullProgress")) end },
     { id = "sync_book_stat",      name = _("同步阅读统计"),     exec = function() UIManager:sendEvent(Event:new("SyncBookStats")) end },
     { id = "screenshot",          name = _("截图"),             exec = function() UIManager:sendEvent(Event:new("Screenshot")) end },
+    { id = "show_toc",            name = _("打开目录"),         exec = function() UIManager:sendEvent(Event:new("ShowToc")) end },
+    { id = "show_search",         name = _("全文搜索"),         exec = function() UIManager:sendEvent(Event:new("ShowFulltextSearchInput")) end },
+    { id = "show_menu",           name = _("打开菜单"),         exec = function() UIManager:sendEvent(Event:new("ShowMenu")) end },
+    { id = "show_config_menu",    name = _("打开设置"),         exec = function() UIManager:sendEvent(Event:new("ShowConfigMenu")) end },
+    { id = "skim_to",             name = _("跳转进度"),         exec = function() UIManager:sendEvent(Event:new("ShowSkimtoDialog")) end },
+    { id = "show_bookmarks",      name = _("书签列表"),         exec = function() UIManager:sendEvent(Event:new("ShowBookmark")) end },
+    { id = "suspend",             name = _("睡眠"),             exec = function() UIManager:sendEvent(Event:new("RequestSuspend")) end },
+    { id = "toggle_frontlight",   name = _("开关背光"),         exec = function() UIManager:sendEvent(Event:new("ToggleFrontlight")) end },
 }
 
 -- 从注册表构建快速查找索引
@@ -837,19 +845,105 @@ function BluetoothController:handleInputEvent(ev)
     -- 忽略系统设备事件
     if self:isSystemKeyEvent(ev) then return end
 
-    -- 忽略按键重复事件（ev.value == 2），蓝牙手柄的长按重复通常不是用户期望的行为
-    if ev.type == C.EV_KEY and ev.value == 2 then
-        return
-    end
-
     local actions = nil
 
-    if ev.type == C.EV_KEY and ev.value == 1 then
-        actions = self:resolveActions(self.config.key_map, ev.code)
-    elseif ev.type == C.EV_ABS and ev.value ~= 0 and not self:isTouchscreenAbsEvent(ev.code) then
+    -- Long-press support for key events
+    -- Config format: key_map[code] = { tap = "action", hold = "action" }
+    -- or simple format: key_map[code] = "action" (tap only, backward compatible)
+    if ev.type == C.EV_KEY then
+        local mapping = self.config.key_map and self.config.key_map[ev.code]
+        if not mapping then
+            -- no mapping for this key, skip
+        elseif type(mapping) == "table" and mapping.hold then
+            -- Extended format with hold support
+            -- Uses a timer since many Bluetooth gamepads don't send repeat events
+            if not self._hold_state then self._hold_state = {} end
+            if ev.value == 1 then
+                -- Key down: start hold timer
+                -- If there's already a pending state (missed key up), cancel it
+                if self._hold_state[ev.code] then
+                    self._hold_state[ev.code] = nil
+                end
+                self._hold_state[ev.code] = { hold_fired = false, seq = (self._hold_seq or 0) + 1 }
+                self._hold_seq = self._hold_state[ev.code].seq
+                local hold_code = ev.code
+                local hold_mapping = mapping
+                local expected_seq = self._hold_state[ev.code].seq
+                UIManager:scheduleIn(0.5, function()
+                    local state = self._hold_state and self._hold_state[hold_code]
+                    if state and not state.hold_fired and state.seq == expected_seq then
+                        -- Timer fired before key release -> long press
+                        state.hold_fired = true
+                        local hold_actions = type(hold_mapping.hold) == "string"
+                                and { hold_mapping.hold } or hold_mapping.hold
+                        for _, action_id in ipairs(hold_actions) do
+                            self:executeAction(action_id)
+                        end
+                    end
+                end)
+                ev.type = -1
+            elseif ev.value == 0 then
+                -- Key up: if hold timer hasn't fired, this was a short tap
+                local state = self._hold_state[ev.code]
+                if state and not state.hold_fired then
+                    local tap_actions = mapping.tap
+                            and (type(mapping.tap) == "string" and { mapping.tap } or mapping.tap)
+                            or nil
+                    if tap_actions then
+                        for _, action_id in ipairs(tap_actions) do
+                            self:executeAction(action_id)
+                        end
+                    end
+                end
+                self._hold_state[ev.code] = nil
+                ev.type = -1
+            end
+        else
+            -- Simple format (string or action list), execute on key down
+            if ev.value == 1 then
+                actions = self:resolveActions(self.config.key_map, ev.code)
+            end
+        end
+    end
+
+    if ev.type == C.EV_ABS and ev.value ~= 0 and not self:isTouchscreenAbsEvent(ev.code) then
         local axis_map = self.config.joy_map and self.config.joy_map[ev.code]
         if axis_map then
-            actions = self:resolveActions(axis_map, ev.value)
+            -- Suppress mechanism: when a mapping specifies suppress=N, the next
+            -- occurrence of value N on the same axis is ignored (one-shot).
+            -- This handles D-pad bounce where releasing a direction briefly
+            -- triggers the opposite mapped value.
+            if not self._axis_suppress then self._axis_suppress = {} end
+            local suppress_key = ev.code .. ":" .. ev.value
+            if self._axis_suppress[suppress_key] then
+                -- This event was marked for suppression, consume it silently
+                self._axis_suppress[suppress_key] = nil
+            else
+                local mapping = axis_map[ev.value]
+                if mapping then
+                    local action_list, suppress_value
+                    if type(mapping) == "table" and mapping.actions then
+                        -- Extended format: { actions = "action" or {"a1","a2"}, suppress = N }
+                        suppress_value = mapping.suppress
+                        if type(mapping.actions) == "string" then
+                            action_list = { mapping.actions }
+                        else
+                            action_list = mapping.actions
+                        end
+                    elseif type(mapping) == "string" then
+                        action_list = { mapping }
+                    elseif type(mapping) == "table" then
+                        action_list = mapping
+                    end
+                    if action_list then
+                        actions = action_list
+                        -- Set up one-shot suppression for the configured follow-up value
+                        if suppress_value then
+                            self._axis_suppress[ev.code .. ":" .. suppress_value] = true
+                        end
+                    end
+                end
+            end
         end
     end
 
@@ -1125,6 +1219,12 @@ end
 function BluetoothController:formatMappingActions(value)
     if type(value) == "string" then
         return self:getActionName(value)
+    elseif type(value) == "table" and value.tap then
+        -- Hold format: { tap = "action", hold = "action" }
+        return self:formatMappingActions(value.tap)
+    elseif type(value) == "table" and value.actions then
+        -- Extended format: { actions = "action" or {"a1","a2"}, suppress = N }
+        return self:formatMappingActions(value.actions)
     elseif type(value) == "table" then
         local names = {}
         for _, action_id in ipairs(value) do
@@ -1203,7 +1303,12 @@ function BluetoothController:showKeyMappingEditor(page)
         for idx = start_idx, end_idx do
             local item = all_items[idx]
             if item.type == "key" then
-                local display = self:formatMappingActions(self.config.key_map[item.code])
+                local mapping = self.config.key_map[item.code]
+                local display = self:formatMappingActions(mapping)
+                if type(mapping) == "table" and mapping.hold then
+                    display = self:formatMappingActions(mapping.tap)
+                            .. _(", 长按 → ") .. self:formatMappingActions(mapping.hold)
+                end
                 local captured_code = item.code
                 table.insert(button_rows, {
                     {
@@ -1462,7 +1567,7 @@ function BluetoothController:selectActions(title, on_confirm, current_actions)
                     if multi_select then
                         selected[action_id_1] = not selected[action_id_1] or nil
                     else
-                        selected = { [action_id_1] = true }
+                        if selected[action_id_1] then selected = {} else selected = { [action_id_1] = true } end
                     end
                     UIManager:close(action_dialog)
                     rebuildDialog()
@@ -1478,7 +1583,7 @@ function BluetoothController:selectActions(title, on_confirm, current_actions)
                         if multi_select then
                             selected[action_id_2] = not selected[action_id_2] or nil
                         else
-                            selected = { [action_id_2] = true }
+                            if selected[action_id_2] then selected = {} else selected = { [action_id_2] = true } end
                         end
                         UIManager:close(action_dialog)
                         rebuildDialog()
@@ -1520,7 +1625,7 @@ function BluetoothController:selectActions(title, on_confirm, current_actions)
             })
         end
 
-        -- 确认 + 切换单选/多选
+        -- 确认 + 取消
         table.insert(button_rows, {
             {
                 text = "✔ " .. _("确认选择"),
@@ -1531,14 +1636,20 @@ function BluetoothController:selectActions(title, on_confirm, current_actions)
                             table.insert(result, action_id)
                         end
                     end
-                    if #result == 0 then
-                        UIManager:show(InfoMessage:new{ text = _("请至少选择一个动作"), timeout = 2 })
-                        return
-                    end
                     UIManager:close(action_dialog)
                     on_confirm(result)
                 end,
             },
+            {
+                text = _("取消"),
+                callback = function()
+                    UIManager:close(action_dialog)
+                end,
+            },
+        })
+
+        -- 切换单选/多选
+        table.insert(button_rows, {
             {
                 text = multi_select and _("切换单选") or _("切换多选"),
                 callback = function()
@@ -1576,6 +1687,11 @@ end
 
 --- 保存映射并立即生效
 function BluetoothController:saveMappingAndApply(mapping_type, key_code, axis_code, axis_value, actions, on_done)
+    if #actions == 0 then
+        -- Empty selection in create path: no-op, just return
+        if on_done then on_done() end
+        return
+    end
     local store_value = #actions == 1 and actions[1] or actions
     local display = self:formatMappingActions(store_value)
 
@@ -1617,44 +1733,256 @@ function BluetoothController:editSingleMapping(mapping_type, code, value, on_don
     end
 
     local edit_action_dialog
+    local buttons = {}
+
+    -- Button: 修改动作
+    local raw_value = mapping_type == "key"
+            and self.config.key_map[code]
+            or self.config.joy_map[code][value]
+    -- Extract tap action and hold for key mappings with hold support
+    local current_tap_action = raw_value
+    local existing_hold = nil
+    if mapping_type == "key" and type(raw_value) == "table" and raw_value.tap then
+        current_tap_action = raw_value.tap
+        existing_hold = raw_value.hold
+    end
+    local current_action_display = current_tap_action and self:formatMappingActions(current_tap_action) or _("无")
+    table.insert(buttons, {
+        {
+            text = string.format(_("修改动作 (当前: %s)"), current_action_display),
+            callback = function()
+                UIManager:close(edit_action_dialog)
+                self:selectActions(
+                        _("选择新动作"),
+                        function(selected_actions)
+                            if #selected_actions == 0 then
+                                -- Empty selection: delete mapping
+                                if mapping_type == "key" then
+                                    self.config.key_map[code] = nil
+                                else
+                                    self.config.joy_map[code][value] = nil
+                                end
+                                self:saveSettings()
+                                UIManager:show(InfoMessage:new{
+                                    text = _("已删除映射"),
+                                    timeout = 2,
+                                })
+                            else
+                                local store_value = #selected_actions == 1 and selected_actions[1] or selected_actions
+                                if mapping_type == "key" then
+                                    -- Preserve existing hold setting
+                                    if existing_hold then
+                                        self.config.key_map[code] = { tap = store_value, hold = existing_hold }
+                                    else
+                                        self.config.key_map[code] = store_value
+                                    end
+                                else
+                                    self.config.joy_map[code][value] = store_value
+                                end
+                                self:saveSettings()
+                                UIManager:show(InfoMessage:new{
+                                    text = string.format(_("已更新 → %s"), self:formatMappingActions(store_value)),
+                                    timeout = 2,
+                                })
+                            end
+                            if on_done then on_done() end
+                        end,
+                        current_tap_action
+                )
+            end,
+        },
+    })
+
+    -- Button: 设置长按 (only for key mappings)
+    if mapping_type == "key" then
+        local current_mapping = self.config.key_map[code]
+        local current_hold = nil
+        local current_tap_for_hold = nil
+        if type(current_mapping) == "table" and current_mapping.hold then
+            current_hold = current_mapping.hold
+            current_tap_for_hold = current_mapping.tap
+        else
+            current_tap_for_hold = self.config.key_map[code]
+        end
+        local hold_label = current_hold
+                and string.format(_("修改长按动作 (当前: %s)"), self:formatMappingActions(current_hold))
+                or _("修改长按动作 (当前: 无)")
+
+        table.insert(buttons, {
+            {
+                text = hold_label,
+                callback = function()
+                    UIManager:close(edit_action_dialog)
+                    self:selectActions(
+                            _("选择长按动作"),
+                            function(selected_actions)
+                                if #selected_actions == 0 then
+                                    -- Clear hold
+                                    self.config.key_map[code] = current_tap_for_hold
+                                    self:saveSettings()
+                                    UIManager:show(InfoMessage:new{
+                                        text = _("已清除长按设置"),
+                                        timeout = 2,
+                                    })
+                                else
+                                    local hold_value = #selected_actions == 1
+                                            and selected_actions[1] or selected_actions
+                                    self.config.key_map[code] = {
+                                        tap = current_tap_for_hold,
+                                        hold = hold_value,
+                                    }
+                                    self:saveSettings()
+                                    UIManager:show(InfoMessage:new{
+                                        text = string.format(_("已设置长按 → %s"),
+                                                self:formatMappingActions(hold_value)),
+                                        timeout = 2,
+                                    })
+                                end
+                                if on_done then on_done() end
+                            end,
+                            current_hold
+                    )
+                end,
+            },
+        })
+    end
+
+    -- Button: 设置抑制 (only for axis mappings)
+    if mapping_type == "axis" then
+        local current_mapping = self.config.joy_map[code] and self.config.joy_map[code][value]
+        local current_suppress = nil
+        if type(current_mapping) == "table" and current_mapping.suppress then
+            current_suppress = current_mapping.suppress
+        end
+        local suppress_label = current_suppress
+                and string.format(_("设置抑制 (当前: %d)"), current_suppress)
+                or _("设置抑制")
+
+        table.insert(buttons, {
+            {
+                text = suppress_label,
+                callback = function()
+                    UIManager:close(edit_action_dialog)
+                    self:editAxisSuppress(code, value, on_done)
+                end,
+            },
+        })
+    end
+
+    -- Button: 删除映射
+    table.insert(buttons, {
+        {
+            text = _("删除映射"),
+            callback = function()
+                UIManager:close(edit_action_dialog)
+                self:deleteSingleMapping(mapping_type, code, value, on_done)
+            end,
+        },
+    })
+
+    -- Button: 返回
+    table.insert(buttons, {
+        {
+            text = _("返回"),
+            callback = function()
+                UIManager:close(edit_action_dialog)
+                if on_done then on_done() end
+            end,
+        },
+    })
+
     edit_action_dialog = ButtonDialog:new{
         title = current_display,
+        buttons = buttons,
+    }
+    UIManager:show(edit_action_dialog)
+end
+
+--- Edit suppress value for an axis mapping
+function BluetoothController:editAxisSuppress(axis_code, axis_value, on_done)
+    local ButtonDialog = require("ui/widget/buttondialog")
+    local InputDialog = require("ui/widget/inputdialog")
+
+    local current_mapping = self.config.joy_map[axis_code] and self.config.joy_map[axis_code][axis_value]
+    local current_actions, current_suppress
+    if type(current_mapping) == "table" and current_mapping.actions then
+        current_actions = current_mapping.actions
+        current_suppress = current_mapping.suppress
+    elseif type(current_mapping) == "string" then
+        current_actions = current_mapping
+    elseif type(current_mapping) == "table" then
+        current_actions = current_mapping
+    end
+
+    local dialog
+    dialog = ButtonDialog:new{
+        title = string.format(_("轴%d值%d 抑制设置"), axis_code, axis_value),
+        info_text = _("当此按键触发后，指定值的下一次事件将被忽略。\n用于解决方向键释放时的回弹误触发问题。\n\n例如：值255触发后抑制127，可防止释放右键时误触发左键。"),
         buttons = {
             {
                 {
-                    text = _("修改动作"),
+                    text = _("输入抑制值"),
                     callback = function()
-                        UIManager:close(edit_action_dialog)
-                        local current_value = mapping_type == "key"
-                                and self.config.key_map[code]
-                                or self.config.joy_map[code][value]
-                        self:selectActions(
-                                _("选择新动作"),
-                                function(selected_actions)
-                                    local store_value = #selected_actions == 1 and selected_actions[1] or selected_actions
-                                    if mapping_type == "key" then
-                                        self.config.key_map[code] = store_value
-                                    else
-                                        self.config.joy_map[code][value] = store_value
-                                    end
-                                    self:saveSettings()
-                                    UIManager:show(InfoMessage:new{
-                                        text = string.format(_("已更新 → %s"), self:formatMappingActions(store_value)),
-                                        timeout = 2,
-                                    })
-                                    if on_done then on_done() end
-                                end,
-                                current_value
-                        )
+                        UIManager:close(dialog)
+                        local input_dialog
+                        input_dialog = InputDialog:new{
+                            title = _("输入要抑制的轴值"),
+                            input = current_suppress and tostring(current_suppress) or "",
+                            input_hint = _("例如: 127"),
+                            input_type = "number",
+                            buttons = {
+                                {
+                                    {
+                                        text = _("取消"),
+                                        id = "close",
+                                        callback = function()
+                                            UIManager:close(input_dialog)
+                                            if on_done then on_done() end
+                                        end,
+                                    },
+                                    {
+                                        text = _("确定"),
+                                        is_enter_default = true,
+                                        callback = function()
+                                            local val = tonumber(input_dialog:getInputText())
+                                            UIManager:close(input_dialog)
+                                            if val then
+                                                -- Convert to extended format with suppress
+                                                self.config.joy_map[axis_code][axis_value] = {
+                                                    actions = current_actions,
+                                                    suppress = val,
+                                                }
+                                                self:saveSettings()
+                                                UIManager:show(InfoMessage:new{
+                                                    text = string.format(_("已设置: 触发后抑制值 %d"), val),
+                                                    timeout = 2,
+                                                })
+                                            end
+                                            if on_done then on_done() end
+                                        end,
+                                    },
+                                },
+                            },
+                        }
+                        UIManager:show(input_dialog)
+                        input_dialog:onShowKeyboard()
                     end,
                 },
             },
             {
                 {
-                    text = _("删除映射"),
+                    text = current_suppress and _("清除抑制") or _("无抑制设置"),
+                    enabled = current_suppress ~= nil,
                     callback = function()
-                        UIManager:close(edit_action_dialog)
-                        self:deleteSingleMapping(mapping_type, code, value, on_done)
+                        UIManager:close(dialog)
+                        -- Remove suppress, keep just the actions
+                        self.config.joy_map[axis_code][axis_value] = current_actions
+                        self:saveSettings()
+                        UIManager:show(InfoMessage:new{
+                            text = _("已清除抑制设置"),
+                            timeout = 2,
+                        })
+                        if on_done then on_done() end
                     end,
                 },
             },
@@ -1662,14 +1990,108 @@ function BluetoothController:editSingleMapping(mapping_type, code, value, on_don
                 {
                     text = _("返回"),
                     callback = function()
-                        UIManager:close(edit_action_dialog)
+                        UIManager:close(dialog)
                         if on_done then on_done() end
                     end,
                 },
             },
         },
     }
-    UIManager:show(edit_action_dialog)
+    UIManager:show(dialog)
+end
+
+--- Edit hold action for a key mapping
+function BluetoothController:editKeyHold(key_code, on_done)
+    local ButtonDialog = require("ui/widget/buttondialog")
+
+    local current_mapping = self.config.key_map[key_code]
+    local current_tap, current_hold
+    if type(current_mapping) == "table" and current_mapping.hold then
+        current_tap = current_mapping.tap
+        current_hold = current_mapping.hold
+    else
+        current_tap = current_mapping
+    end
+
+    local function do_select_hold()
+        self:selectActions(
+                _("选择长按动作"),
+                function(selected_actions)
+                    if #selected_actions == 0 then
+                        -- Empty selection: clear hold
+                        self.config.key_map[key_code] = current_tap
+                        self:saveSettings()
+                        UIManager:show(InfoMessage:new{
+                            text = _("已清除长按设置"),
+                            timeout = 2,
+                        })
+                    else
+                        local hold_value = #selected_actions == 1
+                                and selected_actions[1] or selected_actions
+                        self.config.key_map[key_code] = {
+                            tap = current_tap,
+                            hold = hold_value,
+                        }
+                        self:saveSettings()
+                        UIManager:show(InfoMessage:new{
+                            text = string.format(_("已设置长按 → %s"),
+                                    self:formatMappingActions(hold_value)),
+                            timeout = 2,
+                        })
+                    end
+                    if on_done then on_done() end
+                end,
+                current_hold
+        )
+    end
+
+    if not current_hold then
+        -- No hold set yet, go directly to action selection
+        do_select_hold()
+    else
+        -- Hold already set, show options dialog
+        local hold_dialog
+        hold_dialog = ButtonDialog:new{
+            title = string.format(_("%s 长按设置"), self:getKeyName(key_code)),
+            info_text = string.format(_("当前长按: %s"), self:formatMappingActions(current_hold)),
+            buttons = {
+                {
+                    {
+                        text = _("修改长按动作"),
+                        callback = function()
+                            UIManager:close(hold_dialog)
+                            do_select_hold()
+                        end,
+                    },
+                },
+                {
+                    {
+                        text = _("清除长按"),
+                        callback = function()
+                            UIManager:close(hold_dialog)
+                            self.config.key_map[key_code] = current_tap
+                            self:saveSettings()
+                            UIManager:show(InfoMessage:new{
+                                text = _("已清除长按设置"),
+                                timeout = 2,
+                            })
+                            if on_done then on_done() end
+                        end,
+                    },
+                },
+                {
+                    {
+                        text = _("返回"),
+                        callback = function()
+                            UIManager:close(hold_dialog)
+                            if on_done then on_done() end
+                        end,
+                    },
+                },
+            },
+        }
+        UIManager:show(hold_dialog)
+    end
 end
 
 function BluetoothController:deleteSingleMapping(mapping_type, code, value, on_done)

@@ -190,6 +190,102 @@ msgstr "Sync Book Stats"
 msgid "截图"
 msgstr "Screenshot"
 
+msgid "打开目录"
+msgstr "Table of Contents"
+
+msgid "全文搜索"
+msgstr "Fulltext Search"
+
+msgid "打开菜单"
+msgstr "Reader Menu"
+
+msgid "打开设置"
+msgstr "Config Menu"
+
+msgid "跳转进度"
+msgstr "Skim To"
+
+msgid "书签列表"
+msgstr "Bookmarks"
+
+msgid "睡眠"
+msgstr "Suspend"
+
+msgid "开关背光"
+msgstr "Toggle Frontlight"
+
+msgid "修改动作 (当前: %s)"
+msgstr "Edit Action (current: %s)"
+
+msgid "已删除映射"
+msgstr "Mapping Deleted"
+
+msgid "无"
+msgstr "None"
+
+msgid "设置抑制"
+msgstr "Set Suppress"
+
+msgid "设置抑制 (当前: %d)"
+msgstr "Set Suppress (current: %d)"
+
+msgid "轴%d值%d 抑制设置"
+msgstr "Axis %d Value %d Suppress Settings"
+
+msgid "当此按键触发后，指定值的下一次事件将被忽略。\n用于解决方向键释放时的回弹误触发问题。\n\n例如：值255触发后抑制127，可防止释放右键时误触发左键。"
+msgstr "After this key fires, the next event with the specified value will be suppressed.\nUsed to fix D-pad bounce where releasing a direction briefly triggers the opposite.\n\nExample: After value 255 fires, suppress value 127 to prevent false left trigger on right release."
+
+msgid "输入抑制值"
+msgstr "Enter Suppress Value"
+
+msgid "输入要抑制的轴值"
+msgstr "Enter axis value to suppress"
+
+msgid "例如: 127"
+msgstr "e.g.: 127"
+
+msgid "已设置: 触发后抑制值 %d"
+msgstr "Set: suppress value %d after trigger"
+
+msgid "清除抑制"
+msgstr "Clear Suppress"
+
+msgid "无抑制设置"
+msgstr "No Suppress Set"
+
+msgid "已清除抑制设置"
+msgstr "Suppress setting cleared"
+
+msgid ", 长按 →"
+msgstr ", hold →"
+
+msgid "修改长按动作"
+msgstr "Edit Hold Action"
+
+msgid "修改长按动作 (当前: %s)"
+msgstr "Edit Hold Action (current: %s)"
+
+msgid "修改长按动作 (当前: 无)"
+msgstr "Edit Hold Action (current: None)"
+
+msgid "选择长按动作"
+msgstr "Select Hold Action"
+
+msgid "已设置长按 → %s"
+msgstr "Hold set → %s"
+
+msgid "已清除长按设置"
+msgstr "Hold setting cleared"
+
+msgid "清除长按"
+msgstr "Clear Hold"
+
+msgid "%s 长按设置"
+msgstr "%s Hold Settings"
+
+msgid "当前长按: %s"
+msgstr "Current hold: %s"
+
 # Key names
 msgid "A键"
 msgstr "Button A"
