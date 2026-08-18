@@ -46,6 +46,14 @@ local ACTION_REGISTRY = {
     { id = "pull_progress",       name = _("拉取阅读进度"),     exec = function() UIManager:sendEvent(Event:new("KOSyncPullProgress")) end },
     { id = "sync_book_stat",      name = _("同步阅读统计"),     exec = function() UIManager:sendEvent(Event:new("SyncBookStats")) end },
     { id = "screenshot",          name = _("截图"),             exec = function() UIManager:sendEvent(Event:new("Screenshot")) end },
+    { id = "show_toc",            name = _("打开目录"),         exec = function() UIManager:sendEvent(Event:new("ShowToc")) end },
+    { id = "show_search",         name = _("全文搜索"),         exec = function() UIManager:sendEvent(Event:new("ShowFulltextSearchInput")) end },
+    { id = "show_menu",           name = _("打开菜单"),         exec = function() UIManager:sendEvent(Event:new("ShowMenu")) end },
+    { id = "show_config_menu",    name = _("打开设置"),         exec = function() UIManager:sendEvent(Event:new("ShowConfigMenu")) end },
+    { id = "skim_to",             name = _("跳转进度"),         exec = function() UIManager:sendEvent(Event:new("ShowSkimtoDialog")) end },
+    { id = "show_bookmarks",      name = _("书签列表"),         exec = function() UIManager:sendEvent(Event:new("ShowBookmark")) end },
+    { id = "suspend",             name = _("睡眠"),             exec = function() UIManager:sendEvent(Event:new("RequestSuspend")) end },
+    { id = "toggle_frontlight",   name = _("开关背光"),         exec = function() UIManager:sendEvent(Event:new("ToggleFrontlight")) end },
 }
 
 -- 从注册表构建快速查找索引

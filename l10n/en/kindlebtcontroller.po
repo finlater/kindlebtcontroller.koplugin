@@ -190,6 +190,30 @@ msgstr "Sync Book Stats"
 msgid "截图"
 msgstr "Screenshot"
 
+msgid "打开目录"
+msgstr "Table of Contents"
+
+msgid "全文搜索"
+msgstr "Fulltext Search"
+
+msgid "打开菜单"
+msgstr "Reader Menu"
+
+msgid "打开设置"
+msgstr "Config Menu"
+
+msgid "跳转进度"
+msgstr "Skim To"
+
+msgid "书签列表"
+msgstr "Bookmarks"
+
+msgid "睡眠"
+msgstr "Suspend"
+
+msgid "开关背光"
+msgstr "Toggle Frontlight"
+
 # Key names
 msgid "A键"
 msgstr "Button A"
